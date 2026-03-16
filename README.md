@@ -238,4 +238,4 @@ Lumina/
 
 # License
 
-This project is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) License. See LICENSE file for details.
+This project is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) License. See [LICENSE](https://github.com/Bestroi150/Lumina/blob/main/LICENSE) file for details.
