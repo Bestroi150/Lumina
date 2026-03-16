@@ -39,18 +39,29 @@ if "geolocation_history" not in st.session_state:
 # === GEOCODING FUNCTIONS AND INITIALIZATION ===
 
 # Properly initialize the Groq client with environment variable
-client = Groq(api_key=os.environ.get("GROQ_API"))
+# Read the API key from the correct environment variable
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# The model must output exactly a JSON object containing:
-#    - 'lat': Latitude in decimal degrees (WGS 84)
-#    - 'lon': Longitude in decimal degrees (WGS 84)
-#    - 'url': A link to OpenStreetMap in the format: "https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H"
+# Fail early with a clear error if it's missing
+if not GROQ_API_KEY:
+    st.error(
+        "Missing GROQ_API_KEY. Set it as an environment variable or in your deployment secrets."
+    )
+    st.stop()
+
+# Properly initialize the Groq client
+client = Groq(api_key=GROQ_API_KEY)
+# You could also use:
+# client = Groq()
+# if GROQ_API_KEY is already set in the environment
+
 system_message = {
     "role": "system",
     "content": (
         "You are a skilled geographist. When provided with a location query, respond only with a JSON object "
         "containing three keys: 'lat' (latitude in decimal degrees, WGS 84), 'lon' (longitude in decimal degrees, WGS 84), "
-        "and 'url' which is a valid link to OpenStreetMap in the format 'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
+        "and 'url' which is a valid link to OpenStreetMap in the format "
+        "'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
         "Do not include any additional text."
     )
 }
@@ -65,22 +76,20 @@ def get_coordinates(query):
             system_message,
             {"role": "user", "content": query}
         ]
-        
-        # Make the API call with proper error handling
+
         response = client.chat.completions.create(
             messages=messages,
             model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.0  # Using 0 for more deterministic responses
+            temperature=0.0
         )
-        
-        # Extract the reply from the model
+
         reply = response.choices[0].message.content
         return reply
+
     except Exception as e:
-        # Add proper error handling
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{current_time}] Error getting coordinates: {str(e)}")
-        return json.dumps({"error": str(e)})
+        return json.dumps({"error": str(e)}))})
 
 # === DATA MINING FUNCTIONS (Remaining unchanged) ===
 def parse_line(line):
