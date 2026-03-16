@@ -542,14 +542,20 @@ elif app_mode == "Geolocation":
                 st.code(result, language="json")
 
     if st.session_state.geolocation_history:
-        st.subheader("Geolocation Query History")
-        df_geo_history = pd.DataFrame(st.session_state.geolocation_history)
-        st.dataframe(df_geo_history, use_container_width=True)
+    st.subheader("Geolocation Query History")
 
-        csv_geo = df_geo_history.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Export Query History as CSV",
-            data=csv_geo,
-            file_name="geolocation_query_history.csv",
-            mime="text/csv"
-        )
+    df_geo_history = pd.DataFrame(st.session_state.geolocation_history)
+
+    for col in df_geo_history.columns:
+        df_geo_history[col] = df_geo_history[col].fillna("").astype(str).astype(object)
+
+    # Safer fallback than st.dataframe in some Arrow edge cases
+    st.table(df_geo_history.astype(object))
+
+    csv_geo = df_geo_history.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Export Query History as CSV",
+        data=csv_geo,
+        file_name="geolocation_query_history.csv",
+        mime="text/csv"
+    )
