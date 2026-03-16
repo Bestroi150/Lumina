@@ -117,8 +117,7 @@ def get_coordinates(query):
 
         response = client.chat.completions.create(
             messages=messages,
-            # Change this if your account uses a different available model
-            model="llama-3.3-70b-versatile",
+            model="moonshotai/kimi-k2-instruct-0905",
             temperature=0.0
         )
 
