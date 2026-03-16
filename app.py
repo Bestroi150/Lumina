@@ -1,0 +1,489 @@
+import datetime
+import io
+import os
+import re
+import csv
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import json
+from groq import Groq
+from langdetect import detect, DetectorFactory
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Custom library imports
+from lib.display_utils import (
+    display_baselines,
+    display_baselines_with_text,
+    prepare_segments,
+    open_image
+)
+from lib.kraken_utils import (
+    load_model_seg,
+    load_model_rec,
+    segment_image,
+    recognize_text
+)
+
+# For consistent language detection outcomes.
+DetectorFactory.seed = 0
+
+# --- SESSION STATE INITIALIZATION ---
+st.set_page_config(layout="wide")
+
+if "results_history" not in st.session_state:
+    st.session_state["results_history"] = []
+
+if "geolocation_history" not in st.session_state:
+    st.session_state["geolocation_history"] = []
+
+if "processed_df" not in st.session_state:
+    st.session_state["processed_df"] = None
+
+if "query_log" not in st.session_state:
+    st.session_state["query_log"] = []
+
+# === GEOCODING FUNCTIONS AND INITIALIZATION ===
+
+@st.cache_resource
+def get_groq_client():
+    api_key = os.environ.get("GROQ_API") or os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return None
+    return Groq(api_key=api_key)
+
+# The model must output exactly a JSON object containing:
+#    - 'lat': Latitude in decimal degrees (WGS 84)
+#    - 'lon': Longitude in decimal degrees (WGS 84)
+#    - 'url': A link to OpenStreetMap in the format: "https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H"
+system_message = {
+    "role": "system",
+    "content": (
+        "You are a skilled geographist. When provided with a location query, respond only with a JSON object "
+        "containing three keys: 'lat' (latitude in decimal degrees, WGS 84), 'lon' (longitude in decimal degrees, WGS 84), "
+        "and 'url' which is a valid link to OpenStreetMap in the format 'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
+        "Do not include any additional text."
+    )
+}
+
+def get_coordinates(query):
+    """
+    Uses the Groq model to get coordinates and an OpenStreetMap URL from a location query.
+    Returns the model's raw response which is expected to be a JSON string.
+    """
+    client = get_groq_client()
+    if client is None:
+        return json.dumps({"error": "GROQ API key not configured. Set GROQ_API or GROQ_API_KEY in your environment or .env file."})
+    try:
+        messages = [
+            system_message,
+            {"role": "user", "content": query}
+        ]
+        
+        # Make the API call with proper error handling
+        response = client.chat.completions.create(
+            messages=messages,
+            model="moonshotai/kimi-k2-instruct-0905",
+            temperature=0.0  # Using 0 for more deterministic responses
+        )
+        
+        # Extract the reply from the model
+        reply = response.choices[0].message.content
+        return reply
+    except Exception as e:
+        # Add proper error handling
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{current_time}] Error getting coordinates: {str(e)}")
+        return json.dumps({"error": str(e)})
+
+# === DATA MINING FUNCTIONS (Remaining unchanged) ===
+def parse_line(line):
+    num_part, sep, text = line.partition(":")
+    line_number = num_part.strip()
+    return line_number, text.strip()
+
+def tokenize(text):
+    tokens = re.findall(r'\b\w+\b', text)
+    return tokens
+
+def detect_language(text):
+    try:
+        lang = detect(text)
+    except Exception:
+        lang = "unknown"
+    return lang
+
+def lemmatize(token, lang_code='default'):
+    return token.lower()
+
+def extract_context(tokens, index, window_before=5, window_after=6):
+    start = max(0, index - window_before)
+    end = min(len(tokens), index + window_after + 1)
+    context_tokens = tokens[start:end]
+    return ' '.join(context_tokens)
+
+def process_text_data(text_content):
+    """Process raw text content and return a DataFrame of tokens with context."""
+    results = []
+    for line in text_content.splitlines():
+        if not line.strip():
+            continue
+        line_number, text = parse_line(line)
+        lang_detected = detect_language(text)
+        tokens = tokenize(text)
+        for i, token in enumerate(tokens):
+            lemma = lemmatize(token, lang_code=lang_detected)
+            context = extract_context(tokens, i)
+            results.append({"lemma": lemma, "line": line_number, "context": context})
+    return pd.DataFrame(results, columns=["lemma", "line", "context"])
+
+def process_text_file(input_filepath, output_csv_filepath):
+    results = []
+    with open(input_filepath, "r", encoding="utf-8") as infile:
+        for line in infile:
+            if not line.strip():
+                continue
+            line_number, text = parse_line(line)
+            lang_detected = detect_language(text)
+            tokens = tokenize(text)
+            for i, token in enumerate(tokens):
+                lemma = lemmatize(token, lang_code=lang_detected)
+                context = extract_context(tokens, i)
+                results.append((lemma, line_number, context))
+    
+    with open(output_csv_filepath, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["lemma", "line", "context"])
+        writer.writerows(results)
+    
+    st.success(f"Processing complete. Output written to {output_csv_filepath}")
+
+def search_lemma(search_term, csv_filepath):
+    matches = []
+    with open(csv_filepath, "r", newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if row["lemma"].lower() == search_term.lower():
+                matches.append(row)
+    return matches
+
+def log_query(query, results, query_csv_filepath):
+    try:
+        with open(query_csv_filepath, "r", newline="", encoding="utf-8") as csvfile:
+            pass
+        header_exists = True
+    except FileNotFoundError:
+        header_exists = False
+    
+    with open(query_csv_filepath, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        if not header_exists:
+            writer.writerow(["query", "lemma", "line", "context"])
+        if results:
+            for res in results:
+                writer.writerow([query, res["lemma"], res["line"], res["context"]])
+        else:
+            writer.writerow([query, "", "", ""])
+
+def plot_statistics_plotly(query_csv_filepath):
+    try:
+        results_df = pd.read_csv(query_csv_filepath)
+    except FileNotFoundError:
+        st.warning("No query log CSV file found. No graph will be produced.")
+        return
+
+    results_df = results_df[results_df['lemma'].str.strip() != '']
+    if results_df.empty:
+        st.warning("The query log CSV file is empty. No graph will be produced.")
+        return
+
+    lemma_stats = results_df['lemma'].value_counts().reset_index()
+    lemma_stats.columns = ['Lemma', 'Frequency']
+    fig_pie = px.pie(
+        lemma_stats, 
+        names='Lemma', 
+        values='Frequency',
+        title='Lemma Frequency Distribution',
+        hole=0.3
+    )
+    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+    st.plotly_chart(fig_pie)
+    
+    chapter_stats = results_df.groupby(['line', 'lemma']).size().reset_index(name='Mentions')
+    fig_bar = px.bar(
+        chapter_stats,
+        x='line',
+        y='Mentions',
+        color='lemma',
+        title='Chapter-wise Lemma Mentions',
+        labels={'line': 'Book/Chapter', 'Mentions': 'Mentions'}
+    )
+    fig_bar.update_layout(barmode='stack')
+    st.plotly_chart(fig_bar)
+
+# === PAGE CONFIGURATION AND I/O UTILS (Remaining unchanged) ===
+def get_real_path(path: str) -> str:
+    return os.path.join(os.path.dirname(__file__), path)
+
+def write_temporary_model(file_path, custom_model_loaded):
+    full_path = get_real_path(file_path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, "wb") as file:
+        file.write(custom_model_loaded.getbuffer())
+
+MODEL_SEG_DEFAULT = load_model_seg(get_real_path("data/default/blla.mlmodel"))
+
+hardcoded_models = [
+    {"name": "catmus-medieval-160.mlmodel", "path": "models/catmus-medieval-160.mlmodel", "language": "Latin", "meta": "null"},
+    {"name": "catmus-tiny.mlmodel",         "path": "models/catmus-tiny.mlmodel",         "language": "Latin", "meta": "null"},
+    {"name": "e-NDP_V7.mlmodel",             "path": "models/e-NDP_V7.mlmodel",             "language": "French", "meta": "null"},
+    {"name": "lectaurep_base.mlmodel",       "path": "models/lectaurep_base.mlmodel",       "language": "French", "meta": "null"},
+    {"name": "german_handwriting.mlmodel",   "path": "models/german_handwriting.mlmodel",   "language": "German", "meta": "null"},
+    {"name": "McCATMuS_nfd_nofix_V1.mlmodel",  "path": "models/McCATMuS_nfd_nofix_V1.mlmodel", "language": "Multilang", "meta":"Chagué, A. (2024). McCATMuS - Transcription model for handwritten, printed and typewritten documents from the 16th century to the 21st century. Zenodo. https://doi.org/10.5281/zenodo.13788177"}
+]
+
+# === USER INTERFACE AND NAVIGATION ===
+st.title("Lumina Multimodality")
+st.markdown("Kraken-based OCR/HTR Tool, NLP Text Mining, and Geocoding")
+
+st.sidebar.image("images/logo.png")
+st.sidebar.header("Navigation")
+app_mode = st.sidebar.radio("Select Page", ["Transcription", "Data Mining", "Geolocation"])
+
+
+if app_mode == "Transcription":
+    st.sidebar.header("HTR Configuration")
+    st.sidebar.markdown('---')
+    recognition_model_file = st.sidebar.file_uploader("Upload Recognition Model (.mlmodel)", type=["mlmodel"])
+    selected_model = st.sidebar.selectbox(
+        "Or select a built-in recognition model",
+        options=hardcoded_models,
+        format_func=lambda model: (
+            f"{model['name']} ({model['language']})"
+            if model['meta'] in (None, "null")
+            else f"{model['name']} ({model['language']}) — {model['meta'][:60]}…"
+        )
+    )
+    if recognition_model_file is not None:
+        write_temporary_model('tmp/model_rec_temp.mlmodel', recognition_model_file)
+        model_rec_path = get_real_path('tmp/model_rec_temp.mlmodel')
+        st.sidebar.success("Recognition model loaded from upload!")
+    else:
+        model_rec_path = get_real_path(selected_model["path"])
+        st.sidebar.info(f"Using built-in model: {selected_model['name']} ({selected_model['language']})")
+        st.sidebar.info(f"{selected_model['meta']}")
+# --- PAGE: Transcription ---
+if app_mode == "Transcription":
+    st.subheader("OCR/HTR Results")
+    uploaded_files = st.file_uploader("Upload your page images:", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    if uploaded_files:
+        if len(uploaded_files) > 5:
+            st.warning("For now, only the first 5 pages will be processed.")
+            uploaded_files = uploaded_files[:5]
+    else:
+        st.info("Please upload at least one page image.")
+
+    if uploaded_files and st.button("🚀 Run Prediction"):
+        with st.spinner("Loading models..."):
+            model_rec = load_model_rec(model_rec_path)
+            model_seg = MODEL_SEG_DEFAULT
+            st.success("✅ Models loaded!")
+        
+        for idx, file in enumerate(uploaded_files):
+            with st.expander(f"Page {idx+1} - Preview & Prediction"):
+                image = open_image(file)
+                st.image(image, width=300, caption=f"Page {idx+1}")
+
+                col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1])
+                with col2:
+                    st.markdown("## ✂️ Segmentation")
+                    st.markdown("---")
+                    with st.spinner("⚙️ Segmenting image..."):
+                        baseline_seg = segment_image(image, model_seg)
+                        baselines, boundaries = prepare_segments(baseline_seg)
+                    fig1, fig2 = display_baselines(image, baselines, boundaries)
+                    st.pyplot(fig1)
+                with col3:
+                    st.markdown("## ✍️ Text")
+                    st.markdown("---")
+                    with st.spinner("⚙️ Recognizing text..."):
+                        pred = recognize_text(model_rec, image, baseline_seg)
+                        lines = [record.prediction.strip() for record in pred]
+                        lines_with_idx = [f"{i}: {line}" for i, line in enumerate(lines)]
+                    edited_text = st.text_area(
+                        label="",
+                        value="\n".join(lines),
+                        height=570,
+                        key=f"editable_text_{idx}"
+                    )
+                    # Store page text for combined download
+                    st.session_state["results_history"].append({"page": idx + 1, "text": "\n".join(lines)})
+                with col4:
+                    st.markdown("## ✂️ Segmentation (Index)")
+                    st.markdown("---")
+                    st.pyplot(fig2)
+                with col5:
+                    st.markdown("## ✏️ Text (Index)")
+                    st.markdown("---")
+                    indexed_text = "\n".join(lines_with_idx)
+                    st.text_area(
+                        label="",
+                        value=indexed_text,
+                        height=570,
+                        key=f"indexed_text_{idx}"
+                    )
+                with col6:
+                    st.markdown("## 🔎 Text (Image)")
+                    st.markdown("---")
+                    st.pyplot(display_baselines_with_text(image, baselines, lines))
+                st.markdown("---")
+                st.download_button(
+                    "💾 Download Edited Transcription (this page)",
+                    edited_text,
+                    file_name=f"prediction_page_{idx+1}_edited.txt"
+                )
+                st.download_button(
+                    "💾 Download Transcription Index (this page)",
+                    indexed_text,
+                    file_name=f"prediction_page_{idx+1}_index.txt"
+                )
+
+        # Combined download for all pages
+        if st.session_state["results_history"]:
+            all_text = "\n\n".join(
+                f"=== Page {entry['page']} ===\n{entry['text']}"
+                for entry in st.session_state["results_history"]
+            )
+            st.download_button(
+                "📦 Download All Pages (combined)",
+                all_text,
+                file_name="all_pages_transcription.txt"
+            )
+
+# --- PAGE: Data Mining ---
+elif app_mode == "Data Mining":
+    st.subheader("Data Mining")
+    st.write("Upload a structured text file (formatted as 'line_number: text') for analysis.")
+    uploaded_text_file = st.file_uploader("Upload Input Text File", type=["txt"])
+    if uploaded_text_file is not None:
+        input_txt = uploaded_text_file.getvalue().decode('utf-8')
+        st.success("Input file uploaded successfully.")
+
+        if st.button("Process Text File"):
+            with st.spinner("Processing..."):
+                st.session_state["processed_df"] = process_text_data(input_txt)
+                st.session_state["query_log"] = []
+            st.success(f"Processing complete. {len(st.session_state['processed_df'])} tokens extracted.")
+
+        if st.session_state["processed_df"] is not None:
+            st.markdown("---")
+            st.write("Search for a lemma in the processed data:")
+            search_term = st.text_input("Enter a lemma to search:")
+            if st.button("Search") and search_term:
+                df_proc = st.session_state["processed_df"]
+                mask = df_proc["lemma"].str.lower() == search_term.lower()
+                df_results = df_proc[mask].copy()
+                if not df_results.empty:
+                    st.write(f"**{len(df_results)} match(es)** found for '{search_term}':")
+                    st.dataframe(df_results, use_container_width=True)
+                    csv_results = df_results.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "Download Search Results as CSV",
+                        csv_results,
+                        file_name="search_results.csv",
+                        mime="text/csv"
+                    )
+                    st.session_state["query_log"].extend(
+                        [{"query": search_term, **row} for row in df_results.to_dict("records")]
+                    )
+                else:
+                    st.write(f"No matches found for lemma '{search_term}'.")
+                    st.session_state["query_log"].append(
+                        {"query": search_term, "lemma": "", "line": "", "context": ""}
+                    )
+
+            st.markdown("---")
+            if st.button("Plot Query Statistics"):
+                if st.session_state["query_log"]:
+                    results_df = pd.DataFrame(st.session_state["query_log"])
+                    results_df = results_df[results_df['lemma'].str.strip() != '']
+                    if results_df.empty:
+                        st.warning("No successful queries to plot yet.")
+                    else:
+                        lemma_stats = results_df['lemma'].value_counts().reset_index()
+                        lemma_stats.columns = ['Lemma', 'Frequency']
+                        fig_pie = px.pie(lemma_stats, names='Lemma', values='Frequency',
+                                         title='Lemma Frequency Distribution', hole=0.3)
+                        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig_pie)
+
+                        chapter_stats = results_df.groupby(['line', 'lemma']).size().reset_index(name='Mentions')
+                        fig_bar = px.bar(chapter_stats, x='line', y='Mentions', color='lemma',
+                                         title='Chapter-wise Lemma Mentions',
+                                         labels={'line': 'Book/Chapter', 'Mentions': 'Mentions'})
+                        fig_bar.update_layout(barmode='stack')
+                        st.plotly_chart(fig_bar)
+                else:
+                    st.warning("No query log found. Please perform a search first.")
+
+# --- PAGE: Geolocation ---
+elif app_mode == "Geolocation":
+    st.subheader("Geolocation - Geographic Coordinate Finder")
+    st.markdown(
+        "Enter a location query to receive its geographic coordinates along with an OpenStreetMap link. "
+        "You can also export your queries as a CSV file."
+    )
+
+    # Render the coordinate query form.
+    with st.form(key="coordinate_form", clear_on_submit=True):
+        user_query = st.text_input("Enter your location query:", placeholder="E.g., 'Eiffel Tower, Paris'")
+        submit_button = st.form_submit_button("Get Coordinates")
+        # Process the geolocation query immediately inside the form block.
+        if submit_button and user_query:
+            result = get_coordinates(user_query)
+            try:
+                coords = json.loads(result)
+                lat = coords.get("lat")
+                lon = coords.get("lon")
+                geonames_url = coords.get("url")
+                
+                if lat is None or lon is None or geonames_url is None:
+                    st.error("Error: The response did not contain valid 'lat', 'lon', or 'url' keys. Received: " + result)
+                else:
+                    st.success(f"Coordinates: Latitude {lat}, Longitude {lon}")
+                    st.markdown(f"[Open in OpenStreetMap]({geonames_url})")
+                    
+                    df_map = pd.DataFrame({"lat": [lat], "lon": [lon]})
+                    st.map(df_map)
+                    
+                    # Save the query and its result to session state.
+                    st.session_state.geolocation_history.append({
+                        "query": user_query,
+                        "coordinates": f"{lat}, {lon}",
+                        "url": geonames_url
+                    })
+            except Exception as e:
+                st.error("An error occurred while parsing the response: " + str(e))
+
+    # Display geolocation history if available.
+    if st.session_state.geolocation_history:
+        st.subheader("Geolocation Query History")
+        df_geo_history = pd.DataFrame(st.session_state.geolocation_history)
+        st.dataframe(df_geo_history, use_container_width=True)
+        
+        col_dl, col_clr = st.columns([3, 1])
+        with col_dl:
+            csv_geo = df_geo_history.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Export Query History as CSV",
+                data=csv_geo,
+                file_name="geolocation_query_history.csv",
+                mime="text/csv"
+            )
+        with col_clr:
+            if st.button("🗑️ Clear History"):
+                st.session_state.geolocation_history = []
+                st.rerun()
