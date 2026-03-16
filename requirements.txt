@@ -1,0 +1,8 @@
+numpy
+pandas
+streamlit
+plotly
+groq
+langdetect
+matplotlib
+kraken
