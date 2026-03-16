@@ -2,11 +2,11 @@ import datetime
 import os
 import re
 import csv
+import json
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import json
 from groq import Groq
 from langdetect import detect, DetectorFactory
 
@@ -28,7 +28,7 @@ from lib.kraken_utils import (
 DetectorFactory.seed = 0
 
 # --- SESSION STATE INITIALIZATION ---
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Geocoding Assistant")
 
 if "results_history" not in st.session_state:
     st.session_state["results_history"] = []
@@ -38,22 +38,14 @@ if "geolocation_history" not in st.session_state:
 
 # === GEOCODING FUNCTIONS AND INITIALIZATION ===
 
-# Properly initialize the Groq client with environment variable
-# Read the API key from the correct environment variable
+# Properly initialize the Groq client
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Fail early with a clear error if it's missing
 if not GROQ_API_KEY:
-    st.error(
-        "Missing GROQ_API_KEY. Set it as an environment variable or in your deployment secrets."
-    )
+    st.error("Missing GROQ_API_KEY. Set it as an environment variable or in your deployment secrets.")
     st.stop()
 
-# Properly initialize the Groq client
 client = Groq(api_key=GROQ_API_KEY)
-# You could also use:
-# client = Groq()
-# if GROQ_API_KEY is already set in the environment
 
 system_message = {
     "role": "system",
@@ -62,14 +54,13 @@ system_message = {
         "containing three keys: 'lat' (latitude in decimal degrees, WGS 84), 'lon' (longitude in decimal degrees, WGS 84), "
         "and 'url' which is a valid link to OpenStreetMap in the format "
         "'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
-        "Do not include any additional text."
+        "Do not include any additional text or markdown formatting tags."
     )
 }
 
 def get_coordinates(query):
     """
     Uses the Groq model to get coordinates and an OpenStreetMap URL from a location query.
-    Returns the model's raw response which is expected to be a JSON string.
     """
     try:
         messages = [
@@ -83,13 +74,18 @@ def get_coordinates(query):
             temperature=0.0
         )
 
-        reply = response.choices[0].message.content
+        reply = response.choices[0].message.content.strip()
+
+        if reply.startswith("```"):
+            reply = re.sub(r'^```json\s*|\s*```$', '', reply, flags=re.MULTILINE)
+            
         return reply
 
     except Exception as e:
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{current_time}] Error getting coordinates: {str(e)}")
-        return json.dumps({"error": str(e)}))})
+        error_msg = {"error": str(e), "timestamp": current_time}
+        return json.dumps(error_msg)
+
 
 # === DATA MINING FUNCTIONS (Remaining unchanged) ===
 def parse_line(line):
