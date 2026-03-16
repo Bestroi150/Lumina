@@ -1,17 +1,3 @@
-Your README is already good, but it can be improved for **clarity, structure, GitHub rendering, and professionalism**. The main issues are:
-
-* Title is slightly unclear
-* Intro paragraph can be sharper
-* Feature sections can be cleaner
-* Some wording is repetitive
-* Add **badges + quick start**
-* Improve **table formatting**
-* Add **license / contribution section**
-
-Below is a **cleaned, GitHub-ready version**.
-
----
-
 # Lumina Multimodality
 
 A **Streamlit web application** that integrates **OCR/HTR transcription, NLP text mining, and AI-powered geolocation** into a single interface.
