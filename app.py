@@ -39,8 +39,7 @@ if "geolocation_history" not in st.session_state:
 # === GEOCODING FUNCTIONS AND INITIALIZATION ===
 
 # Properly initialize the Groq client with environment variable
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-client = Groq(api_key=GROQ_API_KEY)
+client = Groq(api_key=os.environ.get("GROQ_API"))
 
 # The model must output exactly a JSON object containing:
 #    - 'lat': Latitude in decimal degrees (WGS 84)
