@@ -2,11 +2,11 @@ import datetime
 import os
 import re
 import csv
-import json
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import json
 from groq import Groq
 from langdetect import detect, DetectorFactory
 
@@ -28,7 +28,7 @@ from lib.kraken_utils import (
 DetectorFactory.seed = 0
 
 # --- SESSION STATE INITIALIZATION ---
-st.set_page_config(layout="wide", page_title="Geocoding Assistant")
+st.set_page_config(layout="wide")
 
 if "results_history" not in st.session_state:
     st.session_state["results_history"] = []
@@ -38,54 +38,49 @@ if "geolocation_history" not in st.session_state:
 
 # === GEOCODING FUNCTIONS AND INITIALIZATION ===
 
-# Properly initialize the Groq client
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Properly initialize the Groq client with environment variable
+client = Groq(api_key=os.environ.get("GROQ_API"))
 
-if not GROQ_API_KEY:
-    st.error("Missing GROQ_API_KEY. Set it as an environment variable or in your deployment secrets.")
-    st.stop()
-
-client = Groq(api_key=GROQ_API_KEY)
-
+# The model must output exactly a JSON object containing:
+#    - 'lat': Latitude in decimal degrees (WGS 84)
+#    - 'lon': Longitude in decimal degrees (WGS 84)
+#    - 'url': A link to OpenStreetMap in the format: "https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H"
 system_message = {
     "role": "system",
     "content": (
         "You are a skilled geographist. When provided with a location query, respond only with a JSON object "
         "containing three keys: 'lat' (latitude in decimal degrees, WGS 84), 'lon' (longitude in decimal degrees, WGS 84), "
-        "and 'url' which is a valid link to OpenStreetMap in the format "
-        "'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
-        "Do not include any additional text or markdown formatting tags."
+        "and 'url' which is a valid link to OpenStreetMap in the format 'https://www.openstreetmap.org/#map=14/<lat>/<lon>&layers=H'. "
+        "Do not include any additional text."
     )
 }
 
 def get_coordinates(query):
     """
     Uses the Groq model to get coordinates and an OpenStreetMap URL from a location query.
+    Returns the model's raw response which is expected to be a JSON string.
     """
     try:
         messages = [
             system_message,
             {"role": "user", "content": query}
         ]
-
+        
+        # Make the API call with proper error handling
         response = client.chat.completions.create(
             messages=messages,
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.0
+            model="moonshotai/kimi-k2-instruct-0905",
+            temperature=0.0  # Using 0 for more deterministic responses
         )
-
-        reply = response.choices[0].message.content.strip()
-
-        if reply.startswith("```"):
-            reply = re.sub(r'^```json\s*|\s*```$', '', reply, flags=re.MULTILINE)
-            
+        
+        # Extract the reply from the model
+        reply = response.choices[0].message.content
         return reply
-
     except Exception as e:
+        # Add proper error handling
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        error_msg = {"error": str(e), "timestamp": current_time}
-        return json.dumps(error_msg)
-
+        print(f"[{current_time}] Error getting coordinates: {str(e)}")
+        return json.dumps({"error": str(e)})
 
 # === DATA MINING FUNCTIONS (Remaining unchanged) ===
 def parse_line(line):
