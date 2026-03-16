@@ -1,5 +1,4 @@
 import datetime
-import io
 import os
 import re
 import csv
@@ -10,9 +9,6 @@ import plotly.express as px
 import json
 from groq import Groq
 from langdetect import detect, DetectorFactory
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Custom library imports
 from lib.display_utils import (
@@ -40,20 +36,10 @@ if "results_history" not in st.session_state:
 if "geolocation_history" not in st.session_state:
     st.session_state["geolocation_history"] = []
 
-if "processed_df" not in st.session_state:
-    st.session_state["processed_df"] = None
-
-if "query_log" not in st.session_state:
-    st.session_state["query_log"] = []
-
 # === GEOCODING FUNCTIONS AND INITIALIZATION ===
 
-@st.cache_resource
-def get_groq_client():
-    api_key = os.environ.get("GROQ_API") or os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        return None
-    return Groq(api_key=api_key)
+# Properly initialize the Groq client with environment variable
+client = Groq(api_key=os.environ.get("GROQ_API"))
 
 # The model must output exactly a JSON object containing:
 #    - 'lat': Latitude in decimal degrees (WGS 84)
@@ -74,9 +60,6 @@ def get_coordinates(query):
     Uses the Groq model to get coordinates and an OpenStreetMap URL from a location query.
     Returns the model's raw response which is expected to be a JSON string.
     """
-    client = get_groq_client()
-    if client is None:
-        return json.dumps({"error": "GROQ API key not configured. Set GROQ_API or GROQ_API_KEY in your environment or .env file."})
     try:
         messages = [
             system_message,
@@ -86,7 +69,7 @@ def get_coordinates(query):
         # Make the API call with proper error handling
         response = client.chat.completions.create(
             messages=messages,
-            model="moonshotai/kimi-k2-instruct-0905",
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             temperature=0.0  # Using 0 for more deterministic responses
         )
         
@@ -124,21 +107,6 @@ def extract_context(tokens, index, window_before=5, window_after=6):
     end = min(len(tokens), index + window_after + 1)
     context_tokens = tokens[start:end]
     return ' '.join(context_tokens)
-
-def process_text_data(text_content):
-    """Process raw text content and return a DataFrame of tokens with context."""
-    results = []
-    for line in text_content.splitlines():
-        if not line.strip():
-            continue
-        line_number, text = parse_line(line)
-        lang_detected = detect_language(text)
-        tokens = tokenize(text)
-        for i, token in enumerate(tokens):
-            lemma = lemmatize(token, lang_code=lang_detected)
-            context = extract_context(tokens, i)
-            results.append({"lemma": lemma, "line": line_number, "context": context})
-    return pd.DataFrame(results, columns=["lemma", "line", "context"])
 
 def process_text_file(input_filepath, output_csv_filepath):
     results = []
@@ -234,7 +202,13 @@ def write_temporary_model(file_path, custom_model_loaded):
     with open(full_path, "wb") as file:
         file.write(custom_model_loaded.getbuffer())
 
-MODEL_SEG_DEFAULT = load_model_seg(get_real_path("data/default/blla.mlmodel"))
+def load_model_seg_cache(model_path):
+    return load_model_seg(model_path)
+
+def load_model_rec_cache(model_path):
+    return load_model_rec(model_path)
+
+MODEL_SEG_DEFAULT = load_model_seg_cache(get_real_path("data/default/blla.mlmodel"))
 
 hardcoded_models = [
     {"name": "catmus-medieval-160.mlmodel", "path": "models/catmus-medieval-160.mlmodel", "language": "Latin", "meta": "null"},
@@ -261,11 +235,7 @@ if app_mode == "Transcription":
     selected_model = st.sidebar.selectbox(
         "Or select a built-in recognition model",
         options=hardcoded_models,
-        format_func=lambda model: (
-            f"{model['name']} ({model['language']})"
-            if model['meta'] in (None, "null")
-            else f"{model['name']} ({model['language']}) — {model['meta'][:60]}…"
-        )
+        format_func=lambda model: f"{model['name']} ({model['language']}) ({model['meta']})"
     )
     if recognition_model_file is not None:
         write_temporary_model('tmp/model_rec_temp.mlmodel', recognition_model_file)
@@ -288,7 +258,7 @@ if app_mode == "Transcription":
 
     if uploaded_files and st.button("🚀 Run Prediction"):
         with st.spinner("Loading models..."):
-            model_rec = load_model_rec(model_rec_path)
+            model_rec = load_model_rec_cache(model_rec_path)
             model_seg = MODEL_SEG_DEFAULT
             st.success("✅ Models loaded!")
         
@@ -319,8 +289,6 @@ if app_mode == "Transcription":
                         height=570,
                         key=f"editable_text_{idx}"
                     )
-                    # Store page text for combined download
-                    st.session_state["results_history"].append({"page": idx + 1, "text": "\n".join(lines)})
                 with col4:
                     st.markdown("## ✂️ Segmentation (Index)")
                     st.markdown("---")
@@ -351,18 +319,6 @@ if app_mode == "Transcription":
                     file_name=f"prediction_page_{idx+1}_index.txt"
                 )
 
-        # Combined download for all pages
-        if st.session_state["results_history"]:
-            all_text = "\n\n".join(
-                f"=== Page {entry['page']} ===\n{entry['text']}"
-                for entry in st.session_state["results_history"]
-            )
-            st.download_button(
-                "📦 Download All Pages (combined)",
-                all_text,
-                file_name="all_pages_transcription.txt"
-            )
-
 # --- PAGE: Data Mining ---
 elif app_mode == "Data Mining":
     st.subheader("Data Mining")
@@ -370,25 +326,24 @@ elif app_mode == "Data Mining":
     uploaded_text_file = st.file_uploader("Upload Input Text File", type=["txt"])
     if uploaded_text_file is not None:
         input_txt = uploaded_text_file.getvalue().decode('utf-8')
+        temp_input_path = "temp_input.txt"
+        with open(temp_input_path, "w", encoding="utf-8") as f:
+            f.write(input_txt)
         st.success("Input file uploaded successfully.")
 
         if st.button("Process Text File"):
-            with st.spinner("Processing..."):
-                st.session_state["processed_df"] = process_text_data(input_txt)
-                st.session_state["query_log"] = []
-            st.success(f"Processing complete. {len(st.session_state['processed_df'])} tokens extracted.")
-
-        if st.session_state["processed_df"] is not None:
-            st.markdown("---")
-            st.write("Search for a lemma in the processed data:")
-            search_term = st.text_input("Enter a lemma to search:")
-            if st.button("Search") and search_term:
-                df_proc = st.session_state["processed_df"]
-                mask = df_proc["lemma"].str.lower() == search_term.lower()
-                df_results = df_proc[mask].copy()
-                if not df_results.empty:
-                    st.write(f"**{len(df_results)} match(es)** found for '{search_term}':")
-                    st.dataframe(df_results, use_container_width=True)
+            process_text_file(temp_input_path, "temp_output.csv")
+        
+        st.markdown("---")
+        st.write("Search for a lemma in the processed data:")
+        search_term = st.text_input("Enter a lemma to search:")
+        if st.button("Search") and search_term:
+            if os.path.exists("temp_output.csv"):
+                results = search_lemma(search_term, "temp_output.csv")
+                if results:
+                    df_results = pd.DataFrame(results)
+                    st.write("Search results:")
+                    st.table(df_results)
                     csv_results = df_results.to_csv(index=False).encode('utf-8')
                     st.download_button(
                         "Download Search Results as CSV",
@@ -396,38 +351,18 @@ elif app_mode == "Data Mining":
                         file_name="search_results.csv",
                         mime="text/csv"
                     )
-                    st.session_state["query_log"].extend(
-                        [{"query": search_term, **row} for row in df_results.to_dict("records")]
-                    )
+                    log_query(search_term, results, "temp_query.csv")
                 else:
                     st.write(f"No matches found for lemma '{search_term}'.")
-                    st.session_state["query_log"].append(
-                        {"query": search_term, "lemma": "", "line": "", "context": ""}
-                    )
+            else:
+                st.warning("Please process the text file first.")
 
-            st.markdown("---")
-            if st.button("Plot Query Statistics"):
-                if st.session_state["query_log"]:
-                    results_df = pd.DataFrame(st.session_state["query_log"])
-                    results_df = results_df[results_df['lemma'].str.strip() != '']
-                    if results_df.empty:
-                        st.warning("No successful queries to plot yet.")
-                    else:
-                        lemma_stats = results_df['lemma'].value_counts().reset_index()
-                        lemma_stats.columns = ['Lemma', 'Frequency']
-                        fig_pie = px.pie(lemma_stats, names='Lemma', values='Frequency',
-                                         title='Lemma Frequency Distribution', hole=0.3)
-                        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                        st.plotly_chart(fig_pie)
-
-                        chapter_stats = results_df.groupby(['line', 'lemma']).size().reset_index(name='Mentions')
-                        fig_bar = px.bar(chapter_stats, x='line', y='Mentions', color='lemma',
-                                         title='Chapter-wise Lemma Mentions',
-                                         labels={'line': 'Book/Chapter', 'Mentions': 'Mentions'})
-                        fig_bar.update_layout(barmode='stack')
-                        st.plotly_chart(fig_bar)
-                else:
-                    st.warning("No query log found. Please perform a search first.")
+        st.markdown("---")
+        if st.button("Plot Query Statistics"):
+            if os.path.exists("temp_query.csv"):
+                plot_statistics_plotly("temp_query.csv")
+            else:
+                st.warning("No query log found. Please perform a search first.")
 
 # --- PAGE: Geolocation ---
 elif app_mode == "Geolocation":
@@ -472,18 +407,12 @@ elif app_mode == "Geolocation":
     if st.session_state.geolocation_history:
         st.subheader("Geolocation Query History")
         df_geo_history = pd.DataFrame(st.session_state.geolocation_history)
-        st.dataframe(df_geo_history, use_container_width=True)
+        st.dataframe(df_geo_history)
         
-        col_dl, col_clr = st.columns([3, 1])
-        with col_dl:
-            csv_geo = df_geo_history.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Export Query History as CSV",
-                data=csv_geo,
-                file_name="geolocation_query_history.csv",
-                mime="text/csv"
-            )
-        with col_clr:
-            if st.button("🗑️ Clear History"):
-                st.session_state.geolocation_history = []
-                st.rerun()
+        csv_geo = df_geo_history.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Export Query History as CSV",
+            data=csv_geo,
+            file_name="geolocation_query_history.csv",
+            mime="text/csv"
+        )
