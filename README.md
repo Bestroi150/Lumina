@@ -236,6 +236,6 @@ Lumina/
 
 ---
 
-# License**
+# License
 
-
+This project is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) License. See LICENSE file for details.
