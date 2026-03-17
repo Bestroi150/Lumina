@@ -1,14 +1,19 @@
-<img 
-  src="https://github.com/Bestroi150/Lumina/blob/main/images/logo.png" 
-  alt="lumina logo" 
-  style="width:250px; height:250px;"
-/>
+<div style="display: flex; align-items: center; gap: 20px;">
+  <img 
+    src="https://github.com/Bestroi150/Lumina/blob/main/images/logo.png" 
+    alt="lumina logo" 
+    style="width:120px; height:120px;"
+  />
 
-
-
-# Lumina Multimodality
-
-A **Streamlit web application** that integrates **OCR/HTR transcription, NLP text mining, and AI-powered geolocation** into a single interface.
+  <div>
+    <h1>Lumina Multimodality</h1>
+    <p>
+      A <strong>Streamlit web application</strong> that integrates 
+      <strong>OCR/HTR transcription, NLP text mining, and AI-powered geolocation</strong> 
+      into a single interface.
+    </p>
+  </div>
+</div>
 
 The application is built on the **Kraken OCR engine** and uses **Groq LLMs** for AI-assisted geolocation.
 
