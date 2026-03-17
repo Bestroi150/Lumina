@@ -1,3 +1,11 @@
+<img 
+  src="https://github.com/Bestroi150/Lumina/images/logo.png" 
+  alt="lumina logo" 
+  style="width:250px; height:250px;"
+/>
+
+
+
 # Lumina Multimodality
 
 A **Streamlit web application** that integrates **OCR/HTR transcription, NLP text mining, and AI-powered geolocation** into a single interface.
