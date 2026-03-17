@@ -4,7 +4,7 @@
       <img 
         src="https://github.com/Bestroi150/Lumina/blob/main/images/logo.png" 
         alt="lumina logo" 
-        width="240"
+        width="400"
       />
     </td>
     <td>
