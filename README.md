@@ -12,13 +12,12 @@
       <p style="margin:0;">
         A <strong>Streamlit web application</strong> that integrates 
         <strong>OCR/HTR transcription, NLP text mining, and AI-powered geolocation</strong> 
-        into a single interface.
+        into a single interface.The application is built on the <strong>Kraken OCR engine</strong> and uses <strong>Groq LLMs</strong> for AI-assisted geolocation.
       </p>
     </td>
   </tr>
 </table>
 
-The application is built on the **Kraken OCR engine** and uses **Groq LLMs** for AI-assisted geolocation.
 ---
 
 ## Overview
