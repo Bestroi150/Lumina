@@ -1,5 +1,5 @@
 <img 
-  src="https://github.com/Bestroi150/Lumina/images/logo.png" 
+  src="https://github.com/Bestroi150/Lumina/blob/main/images/logo.png" 
   alt="lumina logo" 
   style="width:250px; height:250px;"
 />
