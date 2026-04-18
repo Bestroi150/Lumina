@@ -27,7 +27,7 @@ A Streamlit web application that combines OCR/HTR (Handwriting Text Recognition)
 
 ## Features
 
-### 📖 Step 1 — Transcription (OCR/HTR)
+### Step 1 — Transcription (OCR/HTR)
 - Upload one or more manuscript/document page images (`.jpg`, `.jpeg`, `.png`, up to 5 pages)
 - Automatic **baseline segmentation** using the built-in BLLA model (native 1800 px resolution)
 - **Text recognition** using a selection of pre-trained HTR models (or upload your own `.mlmodel`)
@@ -35,26 +35,26 @@ A Streamlit web application that combines OCR/HTR (Handwriting Text Recognition)
 - Editable transcription text area per page
 - Download individual page transcriptions or a **combined all-pages file**
 
-### 🔍 Step 2 — Data Mining
+### Step 2 — Data Mining
 - Automatic **tokenization**, **language detection**, and **lemmatization** of the transcribed text
 - Upload a separate `.txt` file to override the transcription output
 - Search for a lemma and view all occurrences with context
 - Export search results as CSV
 - Interactive **frequency distribution pie chart** and **chapter-wise bar chart** (Plotly)
 
-### 🏷️ Step 3 — Named Entity Recognition (NER)
+### Step 3 — Named Entity Recognition (NER)
 - Extract **place names and geographic entities** (`LOC`, `GPE`, `MISC`) from the text
 - Powered by **spaCy `fr_core_news_lg`** (French large model with word vectors)
 - Detected locations are forwarded automatically to the Geolocation step
 - Exportable entity table and unique-place chips view
 
-### 🌍 Step 4 — Geolocation
+### Step 4 — Geolocation
 - AI-powered coordinate resolution via the **Groq API** (returns lat/lon + OpenStreetMap link)
 - Auto-geocode all NER-detected places, or enter a manual location query
 - Interactive map rendered directly in the app
 - Persistent session history with CSV export and one-click clear
 
-### 📦 Step 5 — Export
+### Step 5 — Export
 - Combined download of all pipeline outputs (transcription, tokens, NER entities, geolocation history)
 
 ---
