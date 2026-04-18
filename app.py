@@ -213,7 +213,7 @@ def get_coordinates(query: str) -> str:
     try:
         response = client.chat.completions.create(
             messages=[_GEO_SYSTEM_MSG, {"role": "user", "content": query}],
-            model="moonshotai/kimi-k2-instruct-0905",
+            model="openai/gpt-oss-20b",
             temperature=0.0,
         )
         return response.choices[0].message.content
